@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -6,31 +7,27 @@ using KTrie;
 
 namespace FileArchiver
 {
-    public class Lzw
+    public static class Lzw
     {
         public static readonly Encoding Encoding;
+
+        private static readonly char[] Chars;
         
         private const int WordSize = 2;
         
         private const int MaxDictionarySize = ushort.MaxValue + 1;
         
-        private readonly StringTrie<ushort> dictionary = new ();
-
         static Lzw()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
             Encoding = Encoding.GetEncoding(1251);
+            Chars = Encoding.GetChars(Enumerable.Range(0, 256).Select(n => (byte) n).ToArray());
         }
         
-        public Lzw()
+        public static void Compress(FileStream input, FileStream output)
         {
-            InitDictionary(dictionary);
-        }
-
-        public void Compress(FileStream input, FileStream output)
-        {
+            var dictionary = InitDictionary();
             var str = string.Empty;
-            char ch;
 
             var readBuffer = new char[1];
 
@@ -39,7 +36,7 @@ namespace FileArchiver
             while (!reader.EndOfStream)
             {
                 reader.Read(readBuffer);
-                ch = readBuffer[0];
+                var ch = readBuffer[0];
                 if (dictionary.ContainsKey(str + ch))
                     str += ch;
                 else
@@ -53,10 +50,48 @@ namespace FileArchiver
             writer.Write(BitConverter.GetBytes(dictionary[str]));
         }
 
-        private static void InitDictionary(StringTrie<ushort> dictionary)
+        public static void Decompress(FileStream input, FileStream output)
         {
-            var chars = Lzw.Encoding.GetChars(Enumerable.Range(0, 256).Select(n => (byte) n).ToArray());
-            dictionary.AddRange(chars.Select((c, i) => new StringEntry<ushort>(c.ToString(), (ushort)i)));
+            var inverseDictionary = InitInverseDictionary();
+            var entry = string.Empty;
+
+
+            using var reader = new BinaryReader(new BufferedStream(input));
+            using var writer = new StreamWriter(output, Encoding);
+
+            var prevCode = reader.ReadUInt16();
+            writer.Write(inverseDictionary[prevCode]);
+
+            while (reader.BaseStream.Position != reader.BaseStream.Length)
+            {
+                var currCode = reader.ReadUInt16();
+                if (inverseDictionary.ContainsKey(currCode))
+                    entry = inverseDictionary[currCode];
+                else
+                    entry += entry[0];
+                writer.Write(entry);
+                var ch = entry[0];
+                inverseDictionary[(ushort) inverseDictionary.Count] = inverseDictionary[prevCode] + ch;
+                prevCode = currCode;
+            }
+        }
+
+        private static StringTrie<ushort> InitDictionary()
+        {
+            var dictionary = new StringTrie<ushort>();
+            dictionary.AddRange(Chars.Select((c, i) => new StringEntry<ushort>(c.ToString(), (ushort)i)));
+            return dictionary;
+        }
+
+        private static Dictionary<ushort, string> InitInverseDictionary()
+        {
+            var dictionary = new Dictionary<ushort, string>(MaxDictionarySize);
+            for (int i = 0; i < Chars.Length; i++)
+            {
+                dictionary[(ushort) i] = Chars[i].ToString();
+            }
+
+            return dictionary;
         }
     }
 }
