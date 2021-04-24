@@ -13,8 +13,6 @@ namespace FileArchiver
 
         private static readonly char[] Chars;
         
-        private const int WordSize = 2;
-        
         private const int MaxDictionarySize = ushort.MaxValue + 1;
         
         static Lzw()
@@ -27,6 +25,7 @@ namespace FileArchiver
         public static void Compress(FileStream input, FileStream output)
         {
             var dictionary = InitDictionary();
+            var leaves = new LinkedList<string>();
             var str = string.Empty;
 
             var readBuffer = new char[1];
@@ -42,7 +41,23 @@ namespace FileArchiver
                 else
                 {
                     writer.Write(BitConverter.GetBytes(dictionary[str]));
-                    dictionary[str + ch] = (ushort)dictionary.Count;
+
+                    if (dictionary.Count == MaxDictionarySize)
+                    {
+                        // ReSharper disable once PossibleNullReferenceException
+                        var last = leaves.Last.Value;
+                        var code = dictionary[last];
+                        dictionary.Remove(last);
+                        leaves.RemoveLast();
+                        dictionary[str + ch] = code;
+                    }
+                    else
+                    {
+                        dictionary[str + ch] = (ushort) dictionary.Count;
+                        leaves.Remove(str);
+                    }
+                    
+                    leaves.AddFirst(str + ch);
                     str = ch.ToString();
                 }
             }
@@ -53,6 +68,7 @@ namespace FileArchiver
         public static void Decompress(FileStream input, FileStream output)
         {
             var inverseDictionary = InitInverseDictionary();
+            var leaves = new LinkedList<ushort>();
             var entry = string.Empty;
 
 
@@ -71,7 +87,22 @@ namespace FileArchiver
                     entry += entry[0];
                 writer.Write(entry);
                 var ch = entry[0];
-                inverseDictionary[(ushort) inverseDictionary.Count] = inverseDictionary[prevCode] + ch;
+                
+                if (inverseDictionary.Count == MaxDictionarySize)
+                {
+                    // ReSharper disable once PossibleNullReferenceException
+                    var last = leaves.Last.Value;
+                    leaves.RemoveLast();
+                    inverseDictionary[last] = inverseDictionary[prevCode] + ch;
+                    leaves.AddFirst(last);
+                }
+                else
+                {
+                    leaves.Remove(prevCode);
+                    leaves.AddFirst((ushort) inverseDictionary.Count);
+                    inverseDictionary[(ushort) inverseDictionary.Count] = inverseDictionary[prevCode] + ch;
+                }
+
                 prevCode = currCode;
             }
         }
